@@ -3,7 +3,18 @@ ENV START_TIME=""
 ENV FORECAST_TYPE=""
 
 RUN dnf install -y git && dnf clean all
-RUN git clone --depth 1 -b temp_routelinkdev https://github.com/alk05/troute-usgsdf.git /opt/troute-da
+
+# troute-usgsdf source. Defaults to greenspacedev's fork; override with
+#   --build-arg USGSDF_REPO=... --build-arg USGSDF_BRANCH=...
+# USGSDF_COMMIT pins an exact commit, and changing it forces Docker to re-clone
+# instead of reusing a cached clone of an older commit on the same branch.
+# Leave it empty to take the branch tip.
+ARG USGSDF_REPO=https://github.com/greenspacedev/troute-usgsdf.git
+ARG USGSDF_BRANCH=vectorize-routelink-gages
+ARG USGSDF_COMMIT=
+RUN git clone -b "${USGSDF_BRANCH}" "${USGSDF_REPO}" /opt/troute-da \
+    && if [ -n "${USGSDF_COMMIT}" ]; then git -C /opt/troute-da checkout -q "${USGSDF_COMMIT}"; fi \
+    && echo "troute-usgsdf: ${USGSDF_REPO} ${USGSDF_BRANCH} @ $(git -C /opt/troute-da rev-parse --short HEAD)"
 
 
 RUN dnf -y install \
