@@ -48,6 +48,12 @@ def main():
             print(f"Could not extract f-value from {file.name}, skipping")
             continue
 
+        # The "- 1" is intentional, not an offset hack. NWM's fNNN file holds the
+        # lateral inflow for the hour *ending* at start + NNN h, while t-route
+        # applies a forcing file named T over the hour *starting* at T and asks
+        # for files named t0, t0 + 1h, ... (AbstractNetwork.build_forcing_sets).
+        # So f001 must be named start + 0h. This only lines up if the restart's
+        # Restart_Time equals start_date (see restart.py).
         f_value = int(match.group(1)) - 1
 
         # Add hours to start time
