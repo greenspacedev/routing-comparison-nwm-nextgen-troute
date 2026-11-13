@@ -108,16 +108,19 @@ echo "N_CPUS: $N_CPUS"
 rm -rf ./t-route/*
 
 # Fetch and rename NWM forecasted channel routing data
+# download_files.sh fetches DOWNLOAD_JOBS files at once (default 8) and reuses
+# NWM_CACHE_DIR when it's set (see the script). It exits non-zero if any file
+# fails, so stop instead of running t-route on missing forcing.
 python scripts/python/fetch_nwm_data.py --start_date "${START_TIME}" --runinput "${FORECAST_TYPE}"
-mkdir ./t-route/channel_forcing
-wget -P ./t-route/channel_forcing -i filenamelist.txt
+bash scripts/bash/download_files.sh filenamelist.txt ./t-route/channel_forcing \
+    || { echo "Error: NWM forcing download failed" >&2; exit 1; }
 python scripts/python/rename_troute_inputs.py --start_date "${START_TIME}" --directory \
     ./t-route/channel_forcing
 
 # Fetch and reformat NWM analysis_assim data into restarts
 python scripts/python/fetch_nwm_data.py --start_date "${START_TIME}" --runinput 5
-mkdir ./t-route/restart
-wget -P ./t-route/restart -i filenamelist.txt
+bash scripts/bash/download_files.sh filenamelist.txt ./t-route/restart \
+    || { echo "Error: NWM analysis_assim download failed" >&2; exit 1; }
 mv ./t-route/restart/nwm*.nc ./t-route/restart/analysis_assim.nc
 
 RESTART_FILE=$(python scripts/python/restart.py \
