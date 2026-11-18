@@ -34,7 +34,7 @@ def main():
 
     # Find all matching NWM files
     channel_forcing_dir = args.directory
-    pattern = "nwm.t*.short_range.channel_rt.f*.conus.nc"
+    pattern = "nwm.t*.*_range.channel_rt*.f*.conus.nc"  # short_range, medium_range (channel_rt_1)
     files = sorted(channel_forcing_dir.glob(pattern))
 
     if not files:

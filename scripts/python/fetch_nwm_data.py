@@ -90,7 +90,7 @@ def main():
     varinput = 1 # channel routing
     geoinput = 1 # CONUS
     urlbaseinput = 3 # GCS
-    meminput = 0 # ensemble member
+    meminput = 1 if runinput == 2 else 0 # ensemble member; medium range is medium_range_mem1
     write_to_file = True
 
     nwmurl.generate_urls_operational(
