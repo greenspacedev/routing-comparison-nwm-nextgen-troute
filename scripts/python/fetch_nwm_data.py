@@ -2,6 +2,12 @@
 Uses nwmurl to fetch operational forecast and analysis/assimilation data.
 
 Usage: python fetch_nwm_data.py --start_date YYYYmmddHHMM --runinput [1,2,3,4,5,6,7,8,9,10,11]
+       python fetch_nwm_data.py --start_date YYYYmmddHHMM --runinput 5 --chain_hours N
+
+--chain_hours N (runinput 5 only): chained analysis-assimilation forcing for an N-hour run.
+Takes the tm00 channel_rt file of every hourly AnA cycle from start + 1 h to start + N h and
+writes chain_filelist.txt: "<url> <t-route file name>" per line. Like the forecast rename,
+the file valid at V is named V - 1 h (t-route applies the file at T over [T, T + 1 h]).
 
 These arguments are nwmurl arguments. The runinput is defined like this:
 1: short-range forecast
@@ -18,7 +24,7 @@ These arguments are nwmurl arguments. The runinput is defined like this:
 """
 
 import argparse
-from datetime import datetime
+from datetime import datetime, timedelta
 import nwmurl
 
 def _parse_arguments() -> argparse.Namespace:
@@ -42,6 +48,12 @@ def _parse_arguments() -> argparse.Namespace:
         help="Represents NWM run configuration. See github.com/CIROH-UA/nwmurl for more details",
         choices=[1,2,3,4,5,6,7,8,9,10,11]
     )
+    parser.add_argument(
+        "--chain_hours",
+        type=int,
+        default=None,
+        help="runinput 5 only: write chain_filelist.txt for an N-hour chained AnA run",
+    )
 
     args = parser.parse_args()
     return args
@@ -58,6 +70,10 @@ def main():
     Only fetches ensemble member 0 (only relevant for medium-range forecasts)
     """
     args = _parse_arguments()
+
+    if args.chain_hours:
+        write_ana_chain(args.start_date, args.chain_hours)
+        return
 
     start_date = args.start_date.strftime("%Y%m%d%H%M")
     end_date = start_date # this only fetches one NWM run
@@ -105,6 +121,43 @@ def main():
         meminput,
         write_to_file
     )
+
+def write_ana_chain(start: datetime, hours: int) -> None:
+    """chain_filelist.txt: tm00 of AnA cycles start + 1 h .. start + hours, named for t-route."""
+    if hours < 1:
+        raise SystemExit("--chain_hours must be >= 1")
+    first = start + timedelta(hours=1)
+    last = start + timedelta(hours=hours)
+    urls = nwmurl.generate_urls_operational(
+        first.strftime("%Y%m%d0000"),
+        last.strftime("%Y%m%d0000"),
+        list(range(24)),  # every hourly cycle of each day; filtered below
+        [0],              # tm00
+        1,                # channel routing
+        1,                # CONUS
+        5,                # analysis-assimilation
+        3,                # GCS
+        0,
+        False,
+    )
+    by_valid = {}
+    for url in urls:
+        # .../nwm.YYYYMMDD/analysis_assim/nwm.tHHz.analysis_assim.channel_rt.tm00.conus.nc
+        day = url.split("/nwm.")[1][:8]
+        hour = url.split("/nwm.t")[1][:2]
+        valid = datetime.strptime(day + hour, "%Y%m%d%H")
+        if first <= valid <= last:
+            by_valid[valid] = url
+    expected = [first + timedelta(hours=i) for i in range(hours)]
+    missing = [v for v in expected if v not in by_valid]
+    if missing:
+        raise SystemExit(f"no AnA URL for {len(missing)} cycle(s), first {missing[0]}")
+    with open("chain_filelist.txt", "wt") as f:
+        for v in expected:
+            name = (v - timedelta(hours=1)).strftime("%Y%m%d%H%M") + ".CHRTOUT_DOMAIN1"
+            f.write(f"{by_valid[v]} {name}\n")
+    print(f"chain_filelist.txt: {hours} AnA tm00 files, {first} .. {last}")
+
 
 if __name__ == "__main__":
     main()

@@ -13,6 +13,11 @@
 # Finally, edit the t-route config file to have the appropriate start_datetime
 # and nts.
 #
+# FORECAST_TYPE 5: chained analysis-assimilation (AnA) run of RUN_HOURS hours
+# instead of a forecast. Forcing is the tm00 file of every hourly AnA cycle,
+# USGS observations cover the whole run, and t-route runs in loops of
+# MAX_LOOP_SIZE hours (default 24). Both are read from the environment.
+#
 # Usage:
 #   bash preprocess_data.sh --START_TIME 202607231200 --FORECAST_TYPE 1
 #   --VPU 03W --N_CPUS 4
@@ -31,7 +36,7 @@ VPU=""
 N_CPUS=""
 
 # Valid options
-VALID_FORECAST_TYPES="1 2 3 4 11"
+VALID_FORECAST_TYPES="1 2 3 4 5 11"
 VALID_VPUS="01 02 03N 03S 03W 04 05 06 07 08 09 10L 10U 11 12 13 14 15 16 17 18"
 
 # Parse arguments
@@ -107,12 +112,26 @@ echo "N_CPUS: $N_CPUS"
 # Prep volume
 rm -rf ./t-route/*
 
-# Fetch and rename NWM forecasted channel routing data
-python scripts/python/fetch_nwm_data.py --start_date "${START_TIME}" --runinput "${FORECAST_TYPE}"
-mkdir ./t-route/channel_forcing
-wget -P ./t-route/channel_forcing -i filenamelist.txt
-python scripts/python/rename_troute_inputs.py --start_date "${START_TIME}" --directory \
-    ./t-route/channel_forcing
+if [[ "$FORECAST_TYPE" == 5 ]]; then
+    # Fetch chained AnA channel routing data, saved under t-route file names
+    if ! [[ "${RUN_HOURS:-}" =~ ^[1-9][0-9]*$ ]]; then
+        echo "Error: FORECAST_TYPE 5 needs RUN_HOURS (hours to run) in the environment"
+        exit 1
+    fi
+    python scripts/python/fetch_nwm_data.py --start_date "${START_TIME}" --runinput 5 \
+        --chain_hours "${RUN_HOURS}" || exit 1
+    mkdir ./t-route/channel_forcing
+    while read -r url name; do
+        wget -nv -O "./t-route/channel_forcing/${name}" "${url}" || exit 1
+    done < chain_filelist.txt
+else
+    # Fetch and rename NWM forecasted channel routing data
+    python scripts/python/fetch_nwm_data.py --start_date "${START_TIME}" --runinput "${FORECAST_TYPE}"
+    mkdir ./t-route/channel_forcing
+    wget -P ./t-route/channel_forcing -i filenamelist.txt
+    python scripts/python/rename_troute_inputs.py --start_date "${START_TIME}" --directory \
+        ./t-route/channel_forcing
+fi
 
 # Fetch and reformat NWM analysis_assim data into restarts
 python scripts/python/fetch_nwm_data.py --start_date "${START_TIME}" --runinput 5
@@ -159,6 +178,9 @@ case $FORECAST_TYPE in
     4)
         N_HOURS=720
         ;;
+    5)
+        N_HOURS=${RUN_HOURS}
+        ;;
     *)
         echo "Invalid forecast type: $FORECAST_TYPE"
         exit 1
@@ -167,7 +189,13 @@ esac
 
 NTS=$((N_HOURS*12))
 export NTS
-export MAX_LOOP_SIZE=$NTS
+OBSERVED_STEPS=2  # makedf default: observations at t0 only (forecast)
+if [[ "$FORECAST_TYPE" == 5 ]]; then
+    export MAX_LOOP_SIZE=${MAX_LOOP_SIZE:-24}  # hours (forcing files) per t-route loop
+    OBSERVED_STEPS=0                           # observations over the whole run
+else
+    export MAX_LOOP_SIZE=$NTS
+fi
 
 
 ROUTELINK="${ROUTELINK_PATH:-./t-route/domain/RouteLink_CONUS.nc}"
@@ -190,6 +218,7 @@ makedf \
     --start "${START_DATETIME}" \
     --mask "./t-route/domain/${MASK_FILE_PATH}" \
     --nts "${NTS}" \
+    --observed-steps "${OBSERVED_STEPS}" \
     --output "${FEATHER_OUTPUT_FILE}"
 
 if [ -s "${FEATHER_OUTPUT_FILE}" ]; then
