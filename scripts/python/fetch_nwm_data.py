@@ -9,6 +9,11 @@ Takes the tm00 channel_rt file of every hourly AnA cycle from start + 1 h to sta
 writes chain_filelist.txt: "<url> <t-route file name>" per line. Like the forecast rename,
 the file valid at V is named V - 1 h (t-route applies the file at T over [T, T + 1 h]).
 
+--retro: NWM Retrospective v3.0 CHRTOUT (hourly, AWS S3) instead of operational data.
+  With --chain_hours N: chain_filelist.txt for an N-hour run, same naming as AnA.
+  Without: filenamelist.txt with the single file valid at start (the restart state).
+  Retro v3.0 covers 1979-02-01 01:00 .. 2023-02-01 00:00.
+
 These arguments are nwmurl arguments. The runinput is defined like this:
 1: short-range forecast
 2: medium-range forecast
@@ -54,6 +59,11 @@ def _parse_arguments() -> argparse.Namespace:
         default=None,
         help="runinput 5 only: write chain_filelist.txt for an N-hour chained AnA run",
     )
+    parser.add_argument(
+        "--retro",
+        action="store_true",
+        help="use NWM Retrospective v3.0 CHRTOUT instead of operational data (see module doc)",
+    )
 
     args = parser.parse_args()
     return args
@@ -70,6 +80,10 @@ def main():
     Only fetches ensemble member 0 (only relevant for medium-range forecasts)
     """
     args = _parse_arguments()
+
+    if args.retro:
+        write_retro(args.start_date, args.chain_hours)
+        return
 
     if args.chain_hours:
         write_ana_chain(args.start_date, args.chain_hours)
@@ -157,6 +171,40 @@ def write_ana_chain(start: datetime, hours: int) -> None:
             name = (v - timedelta(hours=1)).strftime("%Y%m%d%H%M") + ".CHRTOUT_DOMAIN1"
             f.write(f"{by_valid[v]} {name}\n")
     print(f"chain_filelist.txt: {hours} AnA tm00 files, {first} .. {last}")
+
+RETRO_FIRST = datetime(1979, 2, 1, 1)
+RETRO_LAST = datetime(2023, 2, 1, 0)
+
+
+def write_retro(start: datetime, hours: int | None) -> None:
+    """Retro v3.0 CHRTOUT URLs: chain_filelist.txt (hours given) or filenamelist.txt (t0 only)."""
+    first = start + timedelta(hours=1) if hours else start
+    last = start + timedelta(hours=hours) if hours else start
+    if first < RETRO_FIRST or last > RETRO_LAST:
+        raise SystemExit(f"retro v3.0 covers {RETRO_FIRST} .. {RETRO_LAST}; asked for {first} .. {last}")
+    urls = nwmurl.generate_urls_retro(
+        start_date=first.strftime("%Y%m%d%H%M"),
+        end_date=last.strftime("%Y%m%d%H%M"),
+        urlbaseinput=4,          # AWS S3 noaa-nwm-retrospective-3-0-pds
+        objecttype=[2],          # model output
+        selected_var_types=[1],  # CHRTOUT
+    )
+    # .../CHRTOUT/YYYY/YYYYMMDDHH00.CHRTOUT_DOMAIN1 -> valid time
+    by_valid = {datetime.strptime(u.rsplit("/", 1)[1][:10], "%Y%m%d%H"): u for u in urls}
+    expected = [first + timedelta(hours=i) for i in range((last - first) // timedelta(hours=1) + 1)]
+    missing = [v for v in expected if v not in by_valid]
+    if missing:
+        raise SystemExit(f"no retro URL for {len(missing)} hour(s), first {missing[0]}")
+    if not hours:
+        with open("filenamelist.txt", "wt") as f:
+            f.write(by_valid[start] + "\n")
+        print(f"filenamelist.txt: retro CHRTOUT valid {start}")
+        return
+    with open("chain_filelist.txt", "wt") as f:
+        for v in expected:
+            name = (v - timedelta(hours=1)).strftime("%Y%m%d%H%M") + ".CHRTOUT_DOMAIN1"
+            f.write(f"{by_valid[v]} {name}\n")
+    print(f"chain_filelist.txt: {hours} retro CHRTOUT files, {first} .. {last}")
 
 
 if __name__ == "__main__":
